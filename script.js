@@ -1,4 +1,4 @@
-import { getFirestore, collection, addDoc, query, where, getDocs, serverTimestamp } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore.js";
+import { getFirestore, collection, query, where, getDocs, doc, updateDoc, deleteDoc } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore.js";
 import { initializeApp } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-app.js";
 
 const firebaseConfig = {
@@ -29,11 +29,12 @@ const recurringTransactionBtn = document.getElementById("recurringTransaction");
 let currentYear = new Date().getFullYear();
 let currentMonth = new Date().getMonth();
 let recurringTransactions = [];
+let dailyTransactions = {};
+let balanceMap = {}; // Stores balance progression for each day
 function updateMonthYearDisplay() {
     const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
     monthYearElement.innerText = monthNames[currentMonth] + " " + currentYear;
 }
-
 export async function fetchRecurringTransactions() {
     recurringTransactions = [];
     try {
@@ -43,6 +44,71 @@ export async function fetchRecurringTransactions() {
         });
     } catch (error) {
         console.error("Error fetching recurring transactions:", error);
+    }
+}
+
+async function fetchDailyTransactions(year, month) {
+    dailyTransactions = {};
+    balanceMap = {};
+    let runningBalance = 0;
+
+    try {
+        const startDate = `${year}-${(month + 1).toString().padStart(2, '0')}-01`;
+        const endDate = `${year}-${(month + 1).toString().padStart(2, '0')}-31`;
+
+        const q = query(collection(db, "transactions"), where("date", ">=", startDate), where("date", "<=", endDate));
+        const querySnapshot = await getDocs(q);
+
+        querySnapshot.forEach(doc => {
+            let data = doc.data();
+            let date = data.date;
+            if (!dailyTransactions[date]) {
+                dailyTransactions[date] = [];
+            }
+            dailyTransactions[date].push(data.amount);
+        });
+
+        let daysInMonth = new Date(year, month + 1, 0).getDate();
+
+        for (let day = 1; day <= daysInMonth; day++) {
+            let dateKey = `${year}-${(month + 1).toString().padStart(2, '0')}-${day.toString().padStart(2, '0')}`;
+
+            // Add one-time transactions
+            if (dailyTransactions[dateKey]) {
+                dailyTransactions[dateKey].forEach(amount => {
+                    runningBalance += amount;
+                });
+            }
+
+            // Add recurring transactions
+            recurringTransactions.forEach(tx => {
+                let txDate = new Date(tx.startDate);
+                let txYear = txDate.getFullYear();
+                let txMonth = txDate.getMonth();
+                let txDay = txDate.getDate();
+
+                if (txYear > year || (txYear === year && txMonth > month)) {
+                    return; // Skip future transactions
+                }
+
+                if (tx.interval === "monthly" && txDay === day) {
+                    runningBalance += tx.amount;
+                } else if (tx.interval === "weekly") {
+                    let daysBetween = Math.floor((new Date(year, month, day) - txDate) / (1000 * 60 * 60 * 24));
+                    if (daysBetween % 7 === 0) {
+                        runningBalance += tx.amount;
+                    }
+                } else if (tx.interval === "yearly" && txMonth === month && txDay === day) {
+                    runningBalance += tx.amount;
+                }
+            });
+
+            // Store running balance
+            balanceMap[dateKey] = runningBalance;
+        }
+
+    } catch (error) {
+        console.error("Error fetching transactions:", error);
     }
 }
 
@@ -64,9 +130,9 @@ export function generateCalendar(year, month) {
 
     for (let day = 1; day <= daysInMonth; day++) {
         let dateKey = `${year}-${(month + 1).toString().padStart(2, '0')}-${day.toString().padStart(2, '0')}`;
-        let estimatedBalance = calculateFutureBalance(year, month, day);
+        let dailyBalance = balanceMap[dateKey] || 0;
 
-        calendarHTML += `<td class="calendar-day" data-date="${dateKey}">${day} <br> <span class="balance">$${estimatedBalance.toFixed(2)}</span></td>`;
+        calendarHTML += `<td class="calendar-day" data-date="${dateKey}">${day} <br> <span class="balance">$${dailyBalance.toFixed(2)}</span></td>`;
 
         if ((day + firstDay) % 7 === 0) {
             calendarHTML += "</tr><tr>";
@@ -83,33 +149,11 @@ export function generateCalendar(year, month) {
             fetchTransactions(selectedDate);
         });
     });
-}
 
-function calculateFutureBalance(year, month, day) {
-    let balance = 0;
-    let dateKey = `${year}-${(month + 1).toString().padStart(2, '0')}-${day.toString().padStart(2, '0')}`;
-
-    recurringTransactions.forEach(tx => {
-        let txDate = new Date(tx.startDate);
-        let txYear = txDate.getFullYear();
-        let txMonth = txDate.getMonth();
-        let txDay = txDate.getDate();
-
-        if (txYear <= year && (txMonth < month || (txMonth === month && txDay <= day))) {
-            if (tx.interval === "monthly" && txDay <= day) {
-                balance += tx.amount;
-            } else if (tx.interval === "weekly") {
-                let daysBetween = Math.floor((new Date(year, month, day) - txDate) / (1000 * 60 * 60 * 24));
-                if (daysBetween % 7 === 0) {
-                    balance += tx.amount;
-                }
-            } else if (tx.interval === "yearly" && txMonth === month && txDay === day) {
-                balance += tx.amount;
-            }
-        }
-    });
-
-    return balance;
+    // Update the current balance display
+    let today = new Date();
+    let todayKey = `${today.getFullYear()}-${(today.getMonth() + 1).toString().padStart(2, '0')}-${today.getDate().toString().padStart(2, '0')}`;
+    balanceElement.innerText = `$${(balanceMap[todayKey] || 0).toFixed(2)}`;
 }
 
 export async function fetchTransactions(date) {
@@ -135,18 +179,6 @@ export async function fetchTransactions(date) {
                 transactionList.appendChild(txElement);
 
                 totalBalance += data.amount;
-            });
-
-            document.querySelectorAll(".edit-btn").forEach(button => {
-                button.addEventListener("click", function () {
-                    editTransaction(this.getAttribute("data-id"));
-                });
-            });
-
-            document.querySelectorAll(".delete-btn").forEach(button => {
-                button.addEventListener("click", function () {
-                    deleteTransaction(this.getAttribute("data-id"));
-                });
             });
         }
 
@@ -193,7 +225,7 @@ prevMonthButton.addEventListener("click", function () {
         currentMonth = 11;
         currentYear -= 1;
     }
-    generateCalendar(currentYear, currentMonth);
+    fetchDailyTransactions(currentYear, currentMonth).then(() => generateCalendar(currentYear, currentMonth));
 });
 
 nextMonthButton.addEventListener("click", function () {
@@ -202,9 +234,8 @@ nextMonthButton.addEventListener("click", function () {
         currentMonth = 0;
         currentYear += 1;
     }
-    generateCalendar(currentYear, currentMonth);
+    fetchDailyTransactions(currentYear, currentMonth).then(() => generateCalendar(currentYear, currentMonth));
 });
-
 mainFab.addEventListener("click", function () {
     fabMenu.classList.toggle("hidden");
 });
@@ -217,6 +248,4 @@ recurringTransactionBtn.addEventListener("click", function () {
     window.location.href = "add_recurring_transaction.html";
 });
 
-fetchRecurringTransactions().then(() => {
-    generateCalendar(currentYear, currentMonth);
-});
+fetchRecurringTransactions().then(() => fetchDailyTransactions(currentYear, currentMonth).then(() => generateCalendar(currentYear, currentMonth)));
