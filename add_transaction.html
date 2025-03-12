@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Add Transaction</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <header>
+        <button onclick="goBack()" class="back-btn">&larr; Back</button>
+        <h1>Add Transaction</h1>
+    </header>
+
+    <div class="form-container">
+        <label>Description</label>
+        <input type="text" id="description" placeholder="Enter transaction name">
+
+        <label>Amount ($)</label>
+        <input type="number" id="amount" placeholder="Enter amount">
+
+        <label>Type</label>
+        <div class="toggle-container">
+            <input type="checkbox" id="transactionType">
+            <span id="typeLabel">Expense</span>
+        </div>
+
+        <label>Date</label>
+        <input type="date" id="date">
+
+        <button class="save-btn" onclick="saveTransaction()">💾 Save</button>
+    </div>
+
+    <script type="module" src="add_transaction.js"></script>
+</body>
+</html>
